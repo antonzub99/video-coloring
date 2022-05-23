@@ -89,7 +89,7 @@ class Trainer:
         # reshape for conv2d processing in perceptual loss
         perceptual = self.perceptual_loss(lab_pred.view(b * t, ch, h, w), lab_true.view(b * t, ch, h, w))
         anchor = self.anchor_loss(ab_pred[:, :, 0, :, :], ab_pred[:, :, -1, :, :])
-        disc_pred = self.disc_model(lab_pred)
+        disc_pred = self.disc_model(lab_pred.view(b * t, ch, h, w)
         disc_score = self.disc_loss(disc_pred, torch.ones_like(disc_pred))
 
         gen_loss = disc_score + perceptual + self.lambda_anchor * anchor
