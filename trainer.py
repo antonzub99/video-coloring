@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -153,6 +155,9 @@ class Trainer:
             video.append(batched.permute(1, 2, 0))
 
         h, w, ch = video[0].shape
+        if not os.path.isdir(f'{self.val_root}'):
+            os.makedirs(f'{self.val_root}')
+
         video_name = f'{self.val_root}/video{cur_idx:02d}.mp4'
         #io.write_video(video_name, (255 * torch.cat(video, dim=0).clamp(0, 1)).to(torch.uint8), fps=1, video_codec='h264')
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -171,6 +176,10 @@ class Trainer:
             wandb.log({"Video/Val": wandb.Video(video_name)})
 
     def train(self, exp_name, cfg):
+        ckpt_folder = f'{self.models_ckpt}/checkpoints'
+        if not os.path.isdir(ckpt_folder):
+            os.makedirs(ckpt_folder)
+
         if self.logger:
             wandb.init(
                 project='DL-proj',
@@ -189,7 +198,7 @@ class Trainer:
                 torch.save({
                     'generator': self.gen_model.state_dict(),
                     'discriminator': self.disc_model.state_dict()
-                }, f=self.models_ckpt)
+                }, f=ckpt_folder+'/checkpoint.pth')
 
         wandb.finish()
         return self.gen_model, self.disc_model
