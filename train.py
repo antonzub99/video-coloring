@@ -21,6 +21,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_root', type=str, help='Path to saving models')
     parser.add_argument('--val_root', type=str, help='Path to saving validation videos')
 
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
     parser.add_argument('--img_size', type=int, default=128, help='Size of images')
     parser.add_argument('--lr_gen', type=float, default=3e-5, help='Generator LR')
     parser.add_argument('--lr_disc', type=float, default=3e-5, help='Discriminator LR')

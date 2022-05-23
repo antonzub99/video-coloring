@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as data
+
+from torchvision import io
 from torchvision import utils as visionutils
 
 import wandb
@@ -28,6 +30,7 @@ def combineLab(tensorL, tensorAB, mode='bilinear'):
 
 class Trainer:
     def __init__(self, args, **kwargs):
+        self.device = torch.device("cuda:0") if torch.cuda.is_available else torch.device("cpu")
         self.logger = kwargs['logger']
 
         self.data_root = kwargs['data_root']
@@ -51,8 +54,8 @@ class Trainer:
         self.wd = kwargs['wd']
 
         self.gen_model = VideoFlowColorizer(args, flow_ckpt=kwargs['flow_ckpt'],
-                                            img_planes=313, fplanes=313)
-        self.disc_model = ColorDiscriminator(in_size=3)
+                                            img_planes=313, fplanes=313).to(self.device)
+        self.disc_model = ColorDiscriminator(in_size=3).to(self.device)
 
         self.gen_opt = torch.optim.Adam(self.gen_model.parameters(), lr=5 * self.lr_gen, weight_decay=self.wd)
         self.disc_opt = torch.optim.Adam(self.disc_model.parameters(), lr=self.lr_disc, weight_decay=self.wd)
@@ -61,7 +64,7 @@ class Trainer:
         self.lambda_anchor = kwargs['lambda_anchor']
 
     def init_losses(self):
-        perceptual = PerceptualLoss()
+        perceptual = PerceptualLoss().to(self.device)
         anchor = AnchorConsistencyLoss()
         disc_loss = nn.BCEWithLogitsLoss()
         return perceptual, anchor, disc_loss
@@ -73,11 +76,16 @@ class Trainer:
         self.gen_model.train()
         self.disc_model.train()
 
+        frames = frames.to(self.device)
+        target = target.to(self.device)
+
         ab_pred = self.gen_model(frames)
-        b, ch, t, h, w = ab_pred.view()
+        lab_pred = torch.cat((frames, ab_pred), dim=1)
+        lab_true = torch.cat((frames, target), dim=1)
+        b, ch, t, h, w = lab_pred.shape
 
         # reshape for conv2d processing in perceptual loss
-        perceptual = self.perceptual_loss(ab_pred.view(b * t, ch, h, w), target.view(b * t, ch, h, w))
+        perceptual = self.perceptual_loss(lab_pred.view(b * t, ch, h, w), lab_true.view(b * t, ch, h, w))
         anchor = self.anchor_loss(ab_pred[:, :, 0, :, :], ab_pred[:, :, -1, :, :])
         gen_loss = perceptual + self.lambda_anchor * anchor
 
@@ -98,7 +106,7 @@ class Trainer:
 
         lab_pred = lab_pred.view(b * t, ch, h, w)
         lab_true = lab_true.view(b * t, ch, h, w)
-        disc_pred = self.disc_model(lab_pred)
+        disc_pred = self.disc_model(lab_pred.detach())
         disc_true = self.disc_model(lab_true)
 
         disc_loss = self.disc_loss(disc_pred, torch.zeros_like(disc_pred)) + \
@@ -117,10 +125,16 @@ class Trainer:
         frames, target, _ = next(iter(self.valloader))
         self.gen_model.eval()
 
+        frames = frames.to(self.device)
+        target = target.to(self.device)
+
         with torch.no_grad():
             ab_pred = self.gen_model(frames)
-            b, ch, t, h, w = ab_pred.shape
-            perceptual = self.perceptual_loss(ab_pred.view(b * t, ch, h, w), target.view(b * t, ch, h, w))
+            lab_pred = torch.cat((frames, ab_pred), dim=1)
+            lab_true = torch.cat((frames, target), dim=1)
+
+            b, ch, t, h, w = lab_pred.shape
+            perceptual = self.perceptual_loss(lab_pred.view(b * t, ch, h, w), lab_true.view(b * t, ch, h, w))
             anchor = self.anchor_loss(ab_pred[:, :, 0, :, :], ab_pred[:, :, -1, :, :])
             gen_loss = perceptual + self.lambda_anchor * anchor
 
@@ -128,18 +142,21 @@ class Trainer:
             wandb.log({f'Val/Loss/perceptual': perceptual.item(),
                        f'Val/Loss/anchor': anchor.item()})
 
-        rgb_pred = torch.from_numpy(combineLab(frames, ab_pred)).permute(0, 4, 1, 2, 3)
-        rgb_true = torch.from_numpy(combineLab(frames, target)).permute(0, 4, 1, 2, 3)
+        rgb_pred = torch.from_numpy(combineLab(frames.cpu(), ab_pred.cpu())).permute(0, 4, 1, 2, 3)
+        rgb_true = torch.from_numpy(combineLab(frames.cpu(), target.cpu())).permute(0, 4, 1, 2, 3)
 
         video = []
         for idx in range(t):
             # concat along spatial dim
             batched = torch.cat((rgb_pred[:, :, idx, :, :], rgb_true[:, :, idx, :, :]), dim=2)
             batched = visionutils.make_grid(batched.data.detach().cpu(), nrow=1)
-            video.append(batched)
+            video.append(batched.permute(1, 2, 0))
 
-        video_name = f'{self.val_root}/video_{cur_idx:.3f}.mp4'
-        video_writer = cv2.VideoWriter(video_name, cv2.VideoWriter_fourcc(*"MJPG"), 20, (128*2, 128))
+        h, w, ch = video[0].shape
+        video_name = f'{self.val_root}/video{cur_idx:02d}.mp4'
+        #io.write_video(video_name, (255 * torch.cat(video, dim=0).clamp(0, 1)).to(torch.uint8), fps=1, video_codec='h264')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(video_name, fourcc, 1, (w, h))
         if not video_writer.isOpened():
             print("Video writing error")
 

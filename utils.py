@@ -26,6 +26,7 @@ class WeightingNetwork(nn.Module):
         self.act = nn.Sigmoid()
 
     def forward(self, x1, x2, x3, Fb, Ff):
+        #print(x1.shape, x2.shape, x3.shape, Fb.shape, Ff.shape)
         inpt = torch.cat((x1, x2, x3, Fb, Ff), dim=1)
         out = self.convs(inpt)
         return self.act(out)

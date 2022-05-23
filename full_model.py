@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,7 +20,7 @@ class VideoFlowColorizer(nn.Module):
             color_layers.append(layer)
 
         self.feature_extractor = nn.Sequential(*color_layers[:-3])
-        self.color_mapper = nn.Sequential(*color_layers[-3:])
+        self.color_mapper = nn.Sequential(*color_layers[-3:-1])
 
         self.flownet = FlowNet2(args)
         flow_ckpt = torch.load(kwargs['flow_ckpt'])
@@ -28,32 +29,33 @@ class VideoFlowColorizer(nn.Module):
             p.requires_grad = False
 
         self.fusion_network = FFM(kwargs['img_planes'], kwargs['fplanes'])
+        self.upsampler = nn.Upsample(scale_factor=4, mode='bilinear')
 
     def forward(self, frames):
         # assuming frames has shape (B x C x T x H x W)
         # where T stands for timestamp (number of frames in the given portion
 
         #permute to get shape (T x B x C x H x W)
-        frames = self.ab_norm.normilze_l(frames.permute(2, 0, 1, 3, 4))
-        num_frames, _ = frames.shape
+        frames = self.ab_norm.normalize_l(frames.permute(2, 0, 1, 3, 4))
+        num_frames = frames.shape[0]
 
         # extract features from anchors
         anchor_first = frames[0, :, :, :, :]
         anchor_last = frames[-1, :, :, :, :]
-        features_first = self.feature_extractor(anchor_first)
-        features_last = self.feature_extractor(anchor_last)
+        features_first = self.upsampler(self.feature_extractor(anchor_first))
+        features_last = self.upsampler(self.feature_extractor(anchor_last))
 
         colored = list()
-        colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(features_first)))
+        colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(features_first).unsqueeze(2)))
         # create optical flows for forward and backward flows
         forward_masks = []
         backward_masks = []
         with torch.no_grad():
             for first, second in zip(frames[:-2], frames[1:-1]):
-                mask = self.flownet(torch.cat([first.unsqueeze(2), second.unsqueeze(2)], dim=2))
+                mask = self.flownet(torch.cat([first.repeat(1, 3, 1, 1).unsqueeze(2), second.repeat(1, 3, 1, 1).unsqueeze(2)], dim=2))
                 forward_masks.append(mask)
             for first, second in zip(frames[1:-1], frames[2:]):
-                mask = self.flownet(torch.cat([second.unsqueeze(2), first.unsqueeze(2)], dim=2))
+                mask = self.flownet(torch.cat([second.repeat(1, 3, 1, 1).unsqueeze(2), first.repeat(1, 3, 1, 1).unsqueeze(2)], dim=2))
                 backward_masks.append(mask)
 
         in_features = features_first.copy()
@@ -70,17 +72,17 @@ class VideoFlowColorizer(nn.Module):
         # calculate forward warped features and colorize internal frames
         for idx, mask in enumerate(forward_masks):
             warped_in_feature = warp(in_features, mask)
-            base_feature1 = self.feature_extractor(frames[idx])
-            base_feature2 = self.feature_extractor(frames[idx+1])
-            base_feature3 = self.feature_extractor(frames[idx+2])
+            base_feature1 = self.upsampler(self.feature_extractor(frames[idx]))
+            base_feature2 = self.upsampler(self.feature_extractor(frames[idx+1]))
+            base_feature3 = self.upsampler(self.feature_extractor(frames[idx+2]))
             final_feature = self.fusion_network(base_feature1, base_feature2, base_feature3,
                                                 out_features[::-1][idx], warped_in_feature,
                                                 in_features, out_features[::-1][idx+1])
-            colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(final_feature)))
+            colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(final_feature).unsqueeze(2)))
             in_features = final_feature
 
-        colored.append(self.color_mapper(features_last))
-        return colored
+        colored.append(self.color_mapper(features_last).unsqueeze(2))
+        return torch.cat(colored, dim=2)
 
 
 class SelfAttention(nn.Module):
@@ -105,7 +107,7 @@ class SelfAttention(nn.Module):
         query = self.query(x).view(bs, -1, w * h).permute(0, 2, 1)
         key = self.key(x).view(bs, -1, w*h)
         energy = torch.bmm(query, key)
-        attention = self.softmax(energy) / torch.sqrt(w*h)
+        attention = self.softmax(energy) / np.sqrt(w*h)
         value = self.value(x).view(bs, -1, w*h)
         out = torch.bmm(value, attention.permute(0, 2, 1)).view(bs, ch, w, h)
         out = self.gamma * out + x
@@ -146,7 +148,7 @@ class ColorDiscriminator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True)
         )
 
-        self.last = SpectralNorm(nn.Conv2d(self.ndf * 8, [3, 6], 1, 0))
+        self.last = SpectralNorm(nn.Conv2d(self.ndf * 8, 1, 3, 1, 0))
 
     def forward(self, x):
         feat1 = self.layer1(x)
@@ -155,7 +157,6 @@ class ColorDiscriminator(nn.Module):
         feat3 = self.layer3(feat_attn)
         feat4 = self.layer4(feat3)
         feat5 = self.layer5(feat4)
-        feat6 = self.layer6(feat5)
-        out = self.last(feat6)
+        out = self.last(feat5)
         out = F.avg_pool2d(out, out.size()[2:]).view(out.shape[0], -1)
-        return out, feat4
+        return out
