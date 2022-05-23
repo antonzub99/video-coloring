@@ -89,7 +89,10 @@ class Trainer:
         # reshape for conv2d processing in perceptual loss
         perceptual = self.perceptual_loss(lab_pred.view(b * t, ch, h, w), lab_true.view(b * t, ch, h, w))
         anchor = self.anchor_loss(ab_pred[:, :, 0, :, :], ab_pred[:, :, -1, :, :])
-        gen_loss = perceptual + self.lambda_anchor * anchor
+        disc_pred = self.disc_model(lab_pred)
+        disc_score = self.disc_loss(disc_pred, torch.ones_like(disc_pred))
+
+        gen_loss = disc_score + perceptual + self.lambda_anchor * anchor
 
         gen_loss.backward()
         self.gen_opt.step()
@@ -158,7 +161,7 @@ class Trainer:
         if not os.path.isdir(f'{self.val_root}'):
             os.makedirs(f'{self.val_root}')
 
-        video_name = f'{self.val_root}/video{cur_idx:02d}.mp4'
+        video_name = f'{self.val_root}/video{cur_idx:08d}.mp4'
         #io.write_video(video_name, (255 * torch.cat(video, dim=0).clamp(0, 1)).to(torch.uint8), fps=1, video_codec='h264')
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         video_writer = cv2.VideoWriter(video_name, fourcc, 1, (w, h))
