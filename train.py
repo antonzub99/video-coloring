@@ -1,38 +1,45 @@
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.utils.data as data
-
-import torchvision.transforms as transforms
-from dataset import VideoDataset
-from full_model import VideoFlowColorizer, ColorDiscriminator
+import argparse
+from trainer import Trainer
 
 
-class Trainer:
-    def __init__(self, args, **kwargs):
-        self.data_root = kwargs['data_root']
-        self.frame_stack = kwargs['frame_stack']
-        self.batch_size = kwargs['batch_size']
-        self.dataset = VideoDataset(self.data_root, self.frame_stack, img_size=kwargs['img_size'])
-        train_data = data.Subset(self.dataset, np.arange(len(self.dataset))[:-5])
-        val_data = data.Subset(self.dataset, np.arange(len(self.dataset))[-5:])
-        self.trainloader = data.DataLoader(train_data, num_workers=2, batch_size=self.batch_size)
-        self.valloader = data.DataLoader(val_data, num_workers=2, batch_size=1)
+class DotDict(dict):
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
 
 
-        self.lr_gen = kwargs['lr_gen']
-        self.lr_disc = kwargs['lr_disc']
-        self.wd = kwargs['wd']
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
 
-        self.gen_model = VideoFlowColorizer(args, flow_ckpt=kwargs['flow_ckpt'],
-                                            img_planes=313, fplanes=313)
-        self.disc_model = ColorDiscriminator(in_size=3)
+    parser.add_argument('--logger', type=bool, default=True, help='Enbale wandb logging')
+    parser.add_argument('--data_root', type=str, help='Path to dataset')
+    parser.add_argument('--frame_stack', type=int, default=5, help='Number of timestamps to process')
 
-        self.gen_opt = torch.optim.Adam(self.gen_model.parameters(), lr=self.lr_gen, weight_decay=self.wd)
-        self.disc_opt = torch.optim.Adam(self.disc_model.parameters(), lr=self.lr_disc, weight_decay=self.wd)
+    parser.add_argument('--max_iters', type=int, default=100000, help='Maximum training iterations')
+    parser.add_argument('--val_rate', type=int, default=10, help='Every k-th step to validate')
+    parser.add_argument('--save_rate', type=int, default=100, help='Every k-th step to save models')
+    parser.add_argument('--ckpt_root', type=str, help='Path to saving models')
+    parser.add_argument('--val_root', type=str, help='Path to saving validation videos')
 
-    def trainstep(self):
-        pass
+    parser.add_argument('--img_size', type=int, default=128, help='Size of images')
+    parser.add_argument('--lr_gen', type=float, default=3e-5, help='Generator LR')
+    parser.add_argument('--lr_disc', type=float, default=3e-5, help='Discriminator LR')
+    parser.add_argument('--wd', type=float, default=1e-7, help='Weight decay')
 
+    parser.add_argument('--flow_ckpt', type=str, help='Path to stored flow checkpoint')
 
+    parser.add_argument('--lambda_anchor', type=float, default=0.5, help='Anchor consistency loss factor')
+    parser.add_argument('--exp_name', type=str, help='Name of experiment for logging')
+    args = parser.parse_args()
+    kwargs = vars(args)
+    flowargs = DotDict({'rgb_max': 255.})
 
+    newTrainer = Trainer(flowargs, **kwargs)
+
+    if args.logger:
+        cfg = kwargs
+        exp_name = args.exp_name
+    else:
+        cfg = None
+        exp_name = 'Default name'
+    newTrainer.train(exp_name, cfg)
