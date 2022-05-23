@@ -53,13 +53,13 @@ class VideoFlowColorizer(nn.Module):
         with torch.no_grad():
             for first, second in zip(frames[:-2], frames[1:-1]):
                 mask = self.flownet(torch.cat([first.repeat(1, 3, 1, 1).unsqueeze(2), second.repeat(1, 3, 1, 1).unsqueeze(2)], dim=2))
-                forward_masks.append(mask)
+                forward_masks.append(mask.permute(0, 2, 3, 1))
             for first, second in zip(frames[1:-1], frames[2:]):
                 mask = self.flownet(torch.cat([second.repeat(1, 3, 1, 1).unsqueeze(2), first.repeat(1, 3, 1, 1).unsqueeze(2)], dim=2))
-                backward_masks.append(mask)
+                backward_masks.append(mask.permute(0, 2, 3, 1))
 
-        in_features = features_first.copy()
-        out_features = features_last.copy()
+        in_features = features_first.clone()
+        out_features = features_last.clone()
 
         backward_features = [out_features]
 
@@ -76,8 +76,8 @@ class VideoFlowColorizer(nn.Module):
             base_feature2 = self.upsampler(self.feature_extractor(frames[idx+1]))
             base_feature3 = self.upsampler(self.feature_extractor(frames[idx+2]))
             final_feature = self.fusion_network(base_feature1, base_feature2, base_feature3,
-                                                out_features[::-1][idx], warped_in_feature,
-                                                in_features, out_features[::-1][idx+1])
+                                                backward_features[::-1][idx], warped_in_feature,
+                                                in_features, backward_features[::-1][idx+1])
             colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(final_feature).unsqueeze(2)))
             in_features = final_feature
 
