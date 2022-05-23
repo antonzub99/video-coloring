@@ -24,6 +24,8 @@ class VideoFlowColorizer(nn.Module):
         self.flownet = FlowNet2(args)
         flow_ckpt = torch.load(kwargs['flow_ckpt'])
         self.flownet.load_state_dict(flow_ckpt["state_dict"])
+        for p in self.flownet.parameters():
+            p.requires_grad = False
 
         self.fusion_network = FFM(kwargs['img_planes'], kwargs['fplanes'])
 
