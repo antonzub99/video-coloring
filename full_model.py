@@ -13,6 +13,7 @@ class VideoFlowColorizer(nn.Module):
         super().__init__()
         colornet = colorizers.eccv16()
         self.ab_norm = colorizers.base_color.BaseColor()
+
         color_layers = []
         for layer in colornet.children():
             color_layers.append(layer)
