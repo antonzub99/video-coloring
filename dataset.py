@@ -1,22 +1,27 @@
 import os
+import numpy as np
 from typing import List, Tuple, Dict, Any
 from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset
-from dataset_utils import *
+from PIL import Image
+from skimage import color
 
 
 class VideoDataset(Dataset):
-    def __init__(self, root, frame_stack, img_size=128, reference_size=5, extensions=None, transform=None,
-                 target_transform=None):
+    def __init__(self, root, frame_stack, img_size=128, reference_size=None, 
+                transform=None, target_transform=None, 
+                normalize_lab=False, used_classes=None, intersect_frame_stacks=False):
         self.root = root
-        self.reference_size = reference_size
+        self.reference_size = reference_size                   # if reference_size is None, then not generate references
         self.frame_stack = frame_stack
         self.img_size = img_size
         self.loader = self.default_loader
-        self.extensions = extensions
         self.transform = transform
         self.target_transform = target_transform
+        self.normalize_lab = normalize_lab                      # Flag for DeepRemaster-like normlization
+        self.used_classes = used_classes                        # Indiced of classes that is used during construction of this dataset
+        self.intersect_frame_stacks = intersect_frame_stacks    # Generate not distinct framestacks
 
         classes, class_to_idx = self.find_classes(self.root)
         self.samples = self.make_dataset(root, class_to_idx, frame_stack)
@@ -25,8 +30,11 @@ class VideoDataset(Dataset):
         samples = []
 
         for target_class in tqdm(sorted(class_to_idx.keys())):
-            # print(target_class)
             class_index = class_to_idx[target_class]
+            if self.used_classes is not None and class_index not in self.used_classes:
+                # If class is not in the list of used classes - just skip it
+                continue
+
             target_dir = os.path.join(directory, target_class)
             if not os.path.isdir(target_dir):
                 continue
@@ -41,16 +49,25 @@ class VideoDataset(Dataset):
                     for i in range(frame_stack):
                         path = os.path.join(root, sorted_fnames[frame_idx + i])
                         img = self.loader(path).resize((self.img_size, self.img_size))
-                        # img = Resize((self.img_size, self.img_size))(self.loader(path))
-                        image_l, ab = convertRGB2LABTensor(img)
+                        # Convert to Lab color space
+                        image_lab = color.rgb2lab(img)
+                        # Convert to tensor and permute coordinates to format [C, H, W]
+                        image_l = torch.tensor(image_lab[:,:,0:1]).permute(2,0,1)
+                        image_ab = torch.tensor(image_lab[:,:,1:3]).permute(2,0,1)
+                        # Normalization like in DeepRemaster paper
+                        if self.normalize_lab:
+                            image_l = image_l / 100.                        #[0, 100] -> [0, 1]
+                            image_ab = (image_ab + 128).clip(0, 255) / 255. #[-127, 128] -> [0, 1]
                         frames.append(image_l)
-                        targets.append(ab)
+                        targets.append(image_ab)
 
                     sample = torch.stack(frames, dim=1)
                     target = torch.stack(targets, dim=1)
                     samples.append((sample, target))
-
-                    frame_idx += frame_stack
+                    if self.intersect_frame_stacks:
+                        frame_idx += 1  # +=1 instead of += frame_stack to generate more diverse dataset
+                    else:
+                        frame_idx += frame_stack
 
         return samples
 
@@ -60,6 +77,9 @@ class VideoDataset(Dataset):
             frames = self.transform(frames)
         if self.target_transform is not None:
             targets = self.target_transform(targets)
+
+        if self.reference_size is None:
+            return frames, targets
 
         reference_idx = np.random.randint(0, self.frame_stack, size=self.reference_size)
         reference = torch.cat((frames[:, reference_idx, ...], targets[:, reference_idx, ...]), axis=0)
@@ -81,13 +101,8 @@ class VideoDataset(Dataset):
             return img.convert("RGB")
 
     def default_loader(self, path: str) -> Any:
-        from torchvision import get_image_backend
-
-        if get_image_backend() == "accimage":
-            print("!!!!")
-            #return accimage_loader(path)
-        else:
-            return self.pil_loader(path)
+        # Use just pil_loader for simplification
+        return self.pil_loader(path)
 
     def __len__(self):
         return len(self.samples)
