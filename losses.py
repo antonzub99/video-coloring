@@ -69,3 +69,15 @@ class PerceptualLoss(nn.Module):
         for i in range(0, len(gt_fs)):
             loss += self.weights[i] * self.criterion(pred_fs[i], gt_fs[i])
         return loss
+
+
+def psnr(predicted_image, target_image):
+    batch_size = predicted_image.size(0)
+    mse_err = (
+        (predicted_image - target_image)
+        .pow(2).sum(dim=1)
+        .view(batch_size, -1).mean(dim=1)
+    )
+
+    psnr = 10 * (1 / mse_err).log10()
+    return psnr.mean()
