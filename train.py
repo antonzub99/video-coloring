@@ -14,9 +14,9 @@ if __name__ == '__main__':
     parser.add_argument('--logger', type=bool, default=True, help='Enbale wandb logging')
     parser.add_argument('--data_root', type=str, help='Path to dataset')
     parser.add_argument('--frame_stack', type=int, default=5, help='Number of timestamps to process')
-
+    parser.add_argument('--intersect_frames', action="store_true", help='Intersect subsequent frame stacks')
     parser.add_argument('--max_iters', type=int, default=100000, help='Maximum training iterations')
-    parser.add_argument('--val_rate', type=int, default=10, help='Every k-th step to validate')
+    parser.add_argument('--val_rate', type=int, default=100, help='Every k-th step to validate')
     parser.add_argument('--save_rate', type=int, default=100, help='Every k-th step to save models')
     parser.add_argument('--ckpt_root', type=str, help='Path to saving models')
     parser.add_argument('--val_root', type=str, help='Path to saving validation videos')

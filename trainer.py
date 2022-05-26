@@ -14,7 +14,7 @@ from skimage import color
 import cv2
 
 from dataset import VideoDataset
-from full_model import VideoFlowColorizer, ColorDiscriminator
+from flow_model import VideoFlowColorizer, ColorDiscriminator
 from losses import AnchorConsistencyLoss, PerceptualLoss
 
 
@@ -37,6 +37,7 @@ class Trainer:
 
         self.data_root = kwargs['data_root']
         self.frame_stack = kwargs['frame_stack']
+        self.intersect_frame_stacks = kwargs['intersect_frames']
         self.batch_size = kwargs['batch_size']
 
         self.max_iters = kwargs['max_iters']
@@ -45,7 +46,8 @@ class Trainer:
         self.models_ckpt = kwargs['ckpt_root']
 
         self.val_root = kwargs['val_root']
-        self.dataset = VideoDataset(self.data_root, self.frame_stack, img_size=kwargs['img_size'])
+        self.dataset = VideoDataset(self.data_root, self.frame_stack, img_size=kwargs['img_size'], 
+                                    intersect_frame_stacks=self.intersect_frame_stacks)
         train_data = data.Subset(self.dataset, np.arange(len(self.dataset))[:-5])
         val_data = data.Subset(self.dataset, np.arange(len(self.dataset))[-5:])
         self.trainloader = data.DataLoader(train_data, num_workers=2, batch_size=self.batch_size)
@@ -66,13 +68,14 @@ class Trainer:
         self.lambda_anchor = kwargs['lambda_anchor']
 
     def init_losses(self):
-        perceptual = PerceptualLoss().to(self.device)
+        #perceptual = PerceptualLoss().to(self.device)
+        perceptual = nn.MSELoss()
         anchor = AnchorConsistencyLoss()
         disc_loss = nn.BCEWithLogitsLoss()
         return perceptual, anchor, disc_loss
 
     def trainstep(self):
-        frames, target, _ = next(iter(self.trainloader))
+        frames, target = next(iter(self.trainloader))
         # frames have shape (B x C x T x H x W)
         # frames have 1 channel (L), target 2 (ab)
         self.gen_model.train()
@@ -89,7 +92,7 @@ class Trainer:
         # reshape for conv2d processing in perceptual loss
         perceptual = self.perceptual_loss(lab_pred.view(b * t, ch, h, w), lab_true.view(b * t, ch, h, w))
         anchor = self.anchor_loss(ab_pred[:, :, 0, :, :], ab_pred[:, :, -1, :, :])
-        disc_pred = self.disc_model(lab_pred.view(b * t, ch, h, w)
+        disc_pred = self.disc_model(lab_pred.view(b * t, ch, h, w))
         disc_score = self.disc_loss(disc_pred, torch.ones_like(disc_pred))
 
         gen_loss = disc_score + perceptual + self.lambda_anchor * anchor
@@ -127,7 +130,7 @@ class Trainer:
             wandb.log({'Train/Loss/Discriminator': disc_loss.item()})
 
     def valstep(self, cur_idx):
-        frames, target, _ = next(iter(self.valloader))
+        frames, target = next(iter(self.valloader))
         self.gen_model.eval()
 
         frames = frames.to(self.device)
@@ -190,6 +193,8 @@ class Trainer:
                 name=exp_name,
                 config=cfg
             )
+
+            wandb.watch(self.gen_model, log_freq=50)
 
         for step_idx in range(self.max_iters):
             self.trainstep()

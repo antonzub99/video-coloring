@@ -20,7 +20,12 @@ class VideoFlowColorizer(nn.Module):
             color_layers.append(layer)
 
         self.feature_extractor = nn.Sequential(*color_layers[:-3])
+        for p in self.feature_extractor.parameters():
+            p.requires_grad = False
+
         self.color_mapper = nn.Sequential(*color_layers[-3:-1])
+        for p in self.color_mapper.parameters():
+            p.requires_grad = False
 
         self.flownet = FlowNet2(args)
         flow_ckpt = torch.load(kwargs['flow_ckpt'])
@@ -34,19 +39,24 @@ class VideoFlowColorizer(nn.Module):
     def forward(self, frames):
         # assuming frames has shape (B x C x T x H x W)
         # where T stands for timestamp (number of frames in the given portion
+        b, ch, t, h, w = frames.shape
 
         #permute to get shape (T x B x C x H x W)
-        frames = self.ab_norm.normalize_l(frames.permute(2, 0, 1, 3, 4))
+        #frames = self.ab_norm.normalize_l(frames.permute(2, 0, 1, 3, 4))
+        frames = frames.permute(2, 0, 1, 3, 4)
         num_frames = frames.shape[0]
 
         # extract features from anchors
         anchor_first = frames[0, :, :, :, :]
         anchor_last = frames[-1, :, :, :, :]
-        features_first = self.upsampler(self.feature_extractor(anchor_first))
-        features_last = self.upsampler(self.feature_extractor(anchor_last))
+        # features_first = self.upsampler(self.feature_extractor(anchor_first))
+        # features_last = self.upsampler(self.feature_extractor(anchor_last))
+        features_first = self.feature_extractor(anchor_first)
+        features_last = self.feature_extractor(anchor_last)
 
         colored = list()
-        colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(features_first).unsqueeze(2)))
+        #colored.append(self.ab_norm.unnormalize_ab(self.upsampler(self.color_mapper(features_first.view(b, -1, h // 4, w // 4)).view(b, 2, h // 4, w // 4)).unsqueeze(2)))
+        colored.append(self.upsampler(self.color_mapper(features_first.view(b, -1, h // 4, w // 4)).view(b, 2, h // 4, w // 4)).unsqueeze(2))
         # create optical flows for forward and backward flows
         forward_masks = []
         backward_masks = []
@@ -65,23 +75,23 @@ class VideoFlowColorizer(nn.Module):
 
         # estimate warped backward features
         for mask in backward_masks[::-1]:
-            warped_out_feature = warp(out_features, mask)
+            warped_out_feature = F.interpolate(warp(out_features, mask), scale_factor=(0.25,0.25), mode="bilinear")
             backward_features.append(warped_out_feature)
             out_features = warped_out_feature
 
         # calculate forward warped features and colorize internal frames
         for idx, mask in enumerate(forward_masks):
-            warped_in_feature = warp(in_features, mask)
-            base_feature1 = self.upsampler(self.feature_extractor(frames[idx]))
-            base_feature2 = self.upsampler(self.feature_extractor(frames[idx+1]))
-            base_feature3 = self.upsampler(self.feature_extractor(frames[idx+2]))
+            warped_in_feature = F.interpolate(warp(in_features, mask), scale_factor=(0.25,0.25), mode="bilinear")
+            base_feature1 = self.feature_extractor(frames[idx])
+            base_feature2 = self.feature_extractor(frames[idx+1])
+            base_feature3 = self.feature_extractor(frames[idx+2])
             final_feature = self.fusion_network(base_feature1, base_feature2, base_feature3,
                                                 backward_features[::-1][idx], warped_in_feature,
                                                 in_features, backward_features[::-1][idx+1])
-            colored.append(self.ab_norm.unnormalize_ab(self.color_mapper(final_feature).unsqueeze(2)))
+            colored.append(self.upsampler(self.color_mapper(final_feature.view(b, -1, h // 4, w // 4)).view(b, 2, h // 4, w // 4)).unsqueeze(2))
             in_features = final_feature
 
-        colored.append(self.color_mapper(features_last).unsqueeze(2))
+        colored.append(self.upsampler(self.color_mapper(features_last.view(b, -1, h // 4, w // 4)).view(b, 2, h // 4, w // 4)).unsqueeze(2))
         return torch.cat(colored, dim=2)
 
 
