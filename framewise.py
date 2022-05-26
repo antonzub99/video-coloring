@@ -2,11 +2,12 @@ from turtle import forward
 import torch
 import torch.nn as nn
 import numpy as np
-import colorization
+import colorization.colorizers as color
 
 
 class FrameWiseNN(nn.Module):
     def __init__(self, model):
+        super().__init__()
         self.model = model
     
     def forward(self, x):
@@ -21,7 +22,7 @@ class FrameWiseNN(nn.Module):
 
 
 def eccv16_framewise(pretrained=True):
-    return FrameWiseNN(colorization.eccv16(pretrained))
+    return FrameWiseNN(color.eccv16(pretrained))
 
 def siggraph17_framewise(pretrained=True):
-    return FrameWiseNN(colorization.siggraph17(pretrained))
+    return FrameWiseNN(color.siggraph17(pretrained))
