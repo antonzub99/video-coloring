@@ -12,7 +12,7 @@ def convertLAB2RGB(lab):
 
 
 def convertRGB2LABTensor(rgb):
-    lab = color.rgb2lab(np.asarray(rgb)[:, :, ::-1])  # RGB -> LAB L[0, 100] a[-127, 128] b[-128, 127]
+    lab = color.rgb2lab(np.asarray(rgb))  # RGB -> LAB L[0, 100] a[-127, 128] b[-128, 127]
     ab = np.clip(lab[:, :, 1:3] + 128, 0, 255)  # AB --> [0, 255]
     ab = transforms.ToTensor()(ab) / 255.
     L = lab[:, :, 0] * 2.55  # L --> [0, 255]
