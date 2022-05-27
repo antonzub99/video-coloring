@@ -10,7 +10,7 @@ from skimage import color
 
 class VideoDataset(Dataset):
     def __init__(self, root, frame_stack, img_size=128, reference_size=None, 
-                transform=None, target_transform=None, 
+                transform=None, reference_transform=None, 
                 normalize_lab=False, used_classes=None, intersect_frame_stacks=False,
                 need_full_videos=False):
         self.root = root
@@ -19,7 +19,7 @@ class VideoDataset(Dataset):
         self.img_size = img_size
         self.loader = self.default_loader
         self.transform = transform
-        self.target_transform = target_transform
+        self.reference_transform = reference_transform
         self.normalize_lab = normalize_lab                      # Flag for DeepRemaster-like normlization
         self.used_classes = used_classes                        # Indiced of classes that is used during construction of this dataset
         self.intersect_frame_stacks = intersect_frame_stacks    # Generate not distinct framestacks
@@ -97,15 +97,16 @@ class VideoDataset(Dataset):
     def __getitem__(self, index):
         frames, targets = self.samples[index]
         if self.transform is not None:
-            frames = self.transform(frames)
-        if self.target_transform is not None:
-            targets = self.target_transform(targets)
+            frames, targets = self.transform(frames, targets)
 
         if self.reference_size is None:
             return frames, targets
 
         reference_idx = np.random.randint(0, self.frame_stack, size=self.reference_size)
         reference = torch.cat((frames[:, reference_idx, ...], targets[:, reference_idx, ...]), axis=0)
+
+        if self.reference_transform is not None:
+            reference = self.reference_transform(reference)
 
         return frames, targets, reference
 
